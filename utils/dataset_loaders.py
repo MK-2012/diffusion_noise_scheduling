@@ -1,5 +1,6 @@
 from os import listdir, path
 import numpy as np
+from torch import from_numpy, float32, zeros
 from torch.utils.data import Dataset
 from cv2 import VideoCapture, CAP_PROP_FRAME_COUNT, CAP_PROP_FRAME_WIDTH, CAP_PROP_FRAME_HEIGHT
 
@@ -47,3 +48,20 @@ class UCFDataset(Dataset):
                                                         self.items[idx, 1]),
                                               self.items[idx, 0])),\
                self.item_inds[idx]
+
+
+class MovMNISTDataset(Dataset):
+    __slots__ = "data"
+
+    def __init__(self, mov_mnist_numpy_path):
+        self.data = from_numpy(np.load(mov_mnist_numpy_path)).permute(1, 0, 2, 3).unsqueeze(1)
+
+    def __len__(self):
+        return self.data.shape[0]
+
+    def __getitem__(self, idx):
+        try:
+            a = len(idx)
+        except:
+            a = 1
+        return self.data[idx], zeros(a, dtype=float32)
