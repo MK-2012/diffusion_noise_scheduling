@@ -1,6 +1,6 @@
 from torch.nn import MSELoss
 from torch.optim import AdamW
-from diffusers import UNet3DConditionModel, DDPMScheduler
+from diffusers import UNet3DConditionModel, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 
 def init_basic_model(

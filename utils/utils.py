@@ -1,7 +1,9 @@
 import numpy as np
 from tqdm import tqdm
 from gc import collect
-from torch import eye, ones, zeros, arange, diag_embed, diagonal, einsum, randn, randint, sqrt, pow, float32, no_grad, sin, save
+from IPython.display import clear_output
+import matplotlib.pyplot as plt
+from torch import eye, ones, zeros, arange, diag_embed, diagonal, einsum, randn, randint, sqrt, pow, float32, no_grad, sin, save, uint8
 from torch.cuda import empty_cache
 from torch.linalg import eigh
 
@@ -126,6 +128,24 @@ def train_simple_new(
 	return losses
 
 
+# Simple callback for drawing frames from the first video of the batch
+def draw_single_vid_frames(videos):
+	clear_output(wait=True)
+
+	video = ((videos[0].detach().cpu().clamp(-2, 2) / 2 + 1) * 255 / 2).detach().cpu().to(uint8).permute(1, 2, 3, 0)
+
+	step = video.shape[0] // 5
+
+	fig, ax = plt.subplots(nrows=1, ncols=5, constrained_layout=True)
+	fig.set_size_inches(12, 4)
+
+	for i in range(5):
+		ax[i].imshow(video[i * step], cmap="grey")
+		ax[i].axis("off")
+
+	plt.show()
+
+
 def sample_videos(
 	model,
 	num_videos,
@@ -133,10 +153,12 @@ def sample_videos(
 	noise_scheduler,
 	prompts=None,
 	pic_size=(240, 320),
+	sample=None,
 	device="cpu",
 	noise_cov=lambda x: eye(x),
 	cross_att_dim=24,
 	channel_num=3,
+	display_callback=None,
 ):
 	if callable(noise_cov):
 		noise_gen = NormalVideoNoise(cov_matrix = noise_cov(video_length))
@@ -147,8 +169,17 @@ def sample_videos(
 		prompts = sin(arange(1, video_length + 1, device=device).view(-1, 1) * arange(1, cross_att_dim + 1, device=device)).tile(num_videos).view(num_videos, video_length, -1)
 
 	with no_grad():
-		sample = noise_gen.sample((num_videos, channel_num, video_length, pic_size[0], pic_size[1])).to(device)
-		for i, t in enumerate(tqdm(noise_scheduler.timesteps)):
-			residual = model(sample, t, prompts).sample
-			sample = noise_scheduler.step(residual, t, sample).prev_sample
+		if sample is None:
+			sample = noise_gen.sample((num_videos, channel_num, video_length, pic_size[0], pic_size[1])).to(device)
+		if display_callback is None:
+			for i, t in enumerate(tqdm(noise_scheduler.timesteps)):
+				residual = model(sample, t, prompts).sample
+				sample = noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
+		else:
+			for i, t in enumerate(tqdm(noise_scheduler.timesteps)):
+				residual = model(sample, t, prompts).sample
+				sample = noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
+
+				display_callback(sample)
+
 	return sample

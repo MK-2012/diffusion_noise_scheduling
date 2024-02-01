@@ -55,6 +55,7 @@ class MovMNISTDataset(Dataset):
 
     def __init__(self, mov_mnist_numpy_path):
         self.data = from_numpy(np.load(mov_mnist_numpy_path)).permute(1, 0, 2, 3).unsqueeze(1)
+        self.data = self.data.float() / 255 * 2 - 1
 
     def __len__(self):
         return self.data.shape[0]
