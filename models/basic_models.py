@@ -1,6 +1,6 @@
 from torch.nn import MSELoss
 from torch.optim import AdamW
-from diffusers import UNet3DConditionModel, DDPMScheduler, DDIMScheduler
+from diffusers import UNet3DConditionModel, UNet2DConditionModel, DDPMScheduler, DDIMScheduler
 from diffusers.optimization import get_cosine_schedule_with_warmup
 
 def init_basic_model(
@@ -105,3 +105,59 @@ def init_mov_mnist_model(
     output = (model, noise_scheduler, optimizer, lr_scheduler, criterion)
 
     return output 
+
+
+def init_mov_mnist_model_frame(
+    lr_warmup_steps,
+    num_epochs,
+    beta_start,
+    beta_end,
+    object_cnt,
+    device="cpu",
+    total_num_steps=100,
+):
+    model = UNet2DConditionModel(
+        sample_size=(64, 64),
+        in_channels=1,
+        out_channels=1,
+        layers_per_block=3,
+        block_out_channels=(
+            32,
+            48,
+            64,
+            ),
+        norm_num_groups=8,
+        down_block_types=(
+            "CrossAttnDownBlock2D",
+            # "DownBlock2D",
+            "DownBlock2D",
+            "DownBlock2D",
+        ),
+        up_block_types=(
+            "UpBlock2D",
+            "UpBlock2D",
+            "UpBlock2D",
+            # "CrossAttnUpBlock2D",
+          ),
+        cross_attention_dim=4,
+        attention_head_dim=4,
+    )
+    model.to(device)
+    model.train()
+
+    noise_scheduler = DDPMScheduler(
+        num_train_timesteps=total_num_steps, beta_start=beta_start, beta_end=beta_end)
+
+    optimizer = AdamW(model.parameters(), lr=1e-3)
+
+    lr_scheduler = get_cosine_schedule_with_warmup(
+        optimizer=optimizer,
+        num_warmup_steps=lr_warmup_steps,
+        num_training_steps=(object_cnt * num_epochs),
+    )
+
+    criterion = MSELoss()
+
+    output = (model, noise_scheduler, optimizer, lr_scheduler, criterion)
+
+    return output
