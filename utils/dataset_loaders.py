@@ -80,8 +80,5 @@ class MovMNISTFrameDataset(Dataset):
         return self.data.shape[0]
 
     def __getitem__(self, idx):
-        try:
-            a = len(idx)
-        except:
-            a = 1
-        return self.data[idx], zeros(a, dtype=float32)
+        a = self.data[idx]
+        return a, zeros(a.shape[0], dtype=float32)
