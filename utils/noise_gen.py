@@ -1,4 +1,4 @@
-from torch import diagonal, diag_embed, zeros, ones, eye, einsum, pow, randn
+from torch import diagonal, diag_embed, zeros, ones, arange, eye, einsum, pow, sqrt, randn
 from torch.linalg import eigh
 
 # Noises from the article
@@ -47,4 +47,4 @@ class NormalVideoNoise():
 
 	def sample(self, shape):
 		return einsum("abj...,ij->abi...", randn(shape), self.V) + \
-			   self.a.repeat(list(shape[3:]) + [1]).permute(-1, *np.arange(len(shape) - 3))
+			   self.a.repeat(list(shape[3:]) + [1]).permute(-1, *arange(len(shape) - 3))

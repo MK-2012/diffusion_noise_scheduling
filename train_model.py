@@ -1,49 +1,54 @@
 import torch
+from torch.utils.data import DataLoader
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration
 
-from utils.accelerate_training import *
+from utils.training import *
 from utils.dataset_loaders import *
 from models.basic_models import *
 
 
-if __name__ == "__main__":
-    gradient_accumulation_steps = 8
+def main():
+    gradient_accumulation_steps = 2
     conf = ProjectConfiguration(automatic_checkpoint_naming=True)
 
-    accelerator = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps)
+    accelerator = Accelerator(gradient_accumulation_steps=gradient_accumulation_steps, project_config=conf)
 
-    MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist.npy")
-    MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=2)
+    MovMNIST_frame_dataset = MovMNISTFrameDataset("./datasets/moving_mnist.npy")
+    MovMNIST_frame_dataloader = DataLoader(MovMNIST_frame_dataset, shuffle=True, batch_size=32)
 
-    model_video, noise_scheduler_video, optimizer_video, lr_scheduler_video, criterion_video = init_mov_mnist_model(
+    model, noise_scheduler, optimizer, lr_scheduler, criterion = init_mov_mnist_model_frame(
         lr_warmup_steps=100,
-        num_epochs=5,
+        num_epochs=1,
         beta_start=1.17e-3,
         beta_end=1.88e-1,
-        object_cnt = len(MovMNIST_dataloader) // 2,
+        object_cnt = len(MovMNIST_frame_dataloader) // 2,
         device="cpu",
     )
-    model_video, optimizer_video, MovMNIST_dataloader, lr_scheduler_video = accelerator.prepare(
-        model_video, optimizer_video, MovMNIST_dataloader, lr_scheduler_video,
+    model, optimizer, MovMNIST_frame_dataloader, lr_scheduler = accelerator.prepare(
+        model, optimizer, MovMNIST_frame_dataloader, lr_scheduler,
     )
 
-    trainer = TrainableDiffusionModel_accelerate(
+    trainer = TrainableDiffusionModel(
         accelerator_ref = accelerator,
-        model_ref = model_video,
-        optimizer_ref = optimizer_video,
-        lr_scheduler_ref=lr_scheduler_video,
-        noise_scheduler = noise_scheduler_video,
-        criterion = criterion_video,
-        device="cuda:1",
-        model_type="video",
+        model_ref = model,
+        optimizer_ref = optimizer,
+        lr_scheduler_ref=lr_scheduler,
+        noise_scheduler = noise_scheduler,
+        criterion = criterion,
+        model_type="image",
         cross_att_dim=4,
-        noise_cov = lambda x: eye(x),
-        EMA_start=7500,
+        EMA_start=5000,
     )
 
     test_losses = trainer.fit(
-        dataloader = MovMNIST_dataloader,
-        save_path = "./models/trained/mov_mnist_uncorr_noise_long/",
-        num_epochs = 5,
+        dataloader = MovMNIST_frame_dataloader,
+        save_path = "./models/trained/test/",
+        num_epochs = 1,
     )
 
-    torch.save(test_losses, "./models/trained/mov_mnist_uncorr_noise_long/losses.pt")
+    accelerator.save(test_losses, "./models/trained/test/losses.pt")
+
+
+if __name__ == "__main__":
+    main()

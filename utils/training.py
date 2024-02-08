@@ -1,5 +1,7 @@
+from numpy import inf
 from tqdm import tqdm
 from copy import deepcopy
+from os.path import join
 
 from torch import eye, empty, arange, cat, as_tensor, randn, randint, uint8, float32, no_grad, sin, save, load
 from torch.nn import MSELoss
@@ -43,13 +45,14 @@ class EMA():
 
 # Training API
 class SimpleSaveCallbacker():
-	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "lr_scheduler_ref", "ema_model_ref", "pbar", "save_path"
+	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar", "save_path"
 
 	def __init__(
 		self,
 		model_ref,
 		optimizer_ref,
 		save_path,
+		accelerator_ref=None,
 		lr_scheduler_ref=None,
 		ema_model_ref=None,
 		pbar=None,
@@ -57,9 +60,10 @@ class SimpleSaveCallbacker():
 	):
 		self.save_timer = 0
 		self.mandatory_save_period = mandatory_save_period
-		self.min_loss = np.inf
+		self.min_loss = inf
 		self.model_ref = model_ref
 		self.optimizer_ref = optimizer_ref
+		self.accelerator_ref = accelerator_ref
 		self.lr_scheduler_ref = lr_scheduler_ref
 		self.ema_model_ref = ema_model_ref
 		self.pbar = pbar
@@ -68,33 +72,49 @@ class SimpleSaveCallbacker():
 	def set_pbar(self, new_pbar):
 		self.pbar = new_pbar
 
+	def _unwrap(self, obj):
+		if self.accelerator_ref is None:
+			return obj
+		else:
+			return self.accelerator_ref.unwrap_model(obj)
+
+	def _save(self, obj, path):
+		if self.accelerator_ref is None:
+			save(self._unwrap(obj.state_dict()), path)
+		else:
+			self.accelerator_ref.save(self._unwrap(obj), path)
+
+	def _save_everything(self, suffix="best"):
+		if self.accelerator_ref is not None:
+			self.accelerator_ref.wait_for_everyone()
+		self._save(self.model_ref, join(self.save_path, "model_") + suffix + ".pt")
+		self._save(self.optimizer_ref, join(self.save_path, "optimizer_") + suffix + ".pt")
+		if self.lr_scheduler_ref is not None:
+			self._save(self.lr_scheduler_ref, join(self.save_path, "scheduler_") + suffix + ".pt")
+		if self.ema_model_ref is not None:
+			self._save(self.ema_model_ref, join(self.save_path, "ema_model_") + suffix + ".pt",)
+
 	def __call__(self, loss):
 		self.save_timer += 1
 
 		self.optimizer_ref.zero_grad()
-		loss.backward()
+		if self.accelerator_ref is None:
+			loss.backward()
+		else:
+			self.accelerator_ref.backward(loss)
 		self.optimizer_ref.step()
-		self.lr_scheduler_ref.step()
+		if self.lr_scheduler_ref is not None:
+			self.lr_scheduler_ref.step()
 
 		if loss.item() <= self.min_loss:
 			self.min_loss = loss.item()
-			save(self.model_ref.state_dict(), self.save_path + "model_best.pt")
-			save(self.optimizer_ref.state_dict(), self.save_path + "optimizer_best.pt")
-			if self.lr_scheduler_ref is not None:
-				save(self.lr_scheduler_ref.state_dict(), self.save_path + "scheduler_best.pt")
-			if self.EMA_model is not None:
-				save(self.EMA_model.state_dict(), self.save_path + "ema_model_best.pt")
+			self._save_everything()
 
 		if self.pbar is not None:
 			self.pbar.set_postfix(MSE=loss.item())
 
 		if (self.save_timer % self.mandatory_save_period) == 0:
-			save(self.model_ref.state_dict(), self.save_path + f"model_{self.save_timer}.pt")
-			save(self.optimizer_ref.state_dict(), self.save_path + f"optimizer_{self.save_timer}.pt")
-			if self.lr_scheduler_ref is not None:
-				save(self.lr_scheduler_ref.state_dict(), self.save_path + f"scheduler_{self.save_timer}.pt")
-			if self.EMA_model is not None:
-				save(self.EMA_model.state_dict(), self.save_path + f"ema_model_{self.save_timer}.pt")
+			self._save_everything(f"{self.save_timer}")
 
 
 class TrainableDiffusionModel():
@@ -103,9 +123,31 @@ class TrainableDiffusionModel():
 	"""
 
 	__slots__ = "model_ref", "optimizer_ref", "noise_scheduler", "criterion", "device", "model_type", "cross_att_dim",\
-				"noise_cov", "lr_scheduler_ref", "EMA_model", "EMA_sched"
+				"noise_cov", "lr_scheduler_ref", "accelerator_ref", "EMA_model", "EMA_sched"
 
 	available_model_types = {"video", "image"}
+
+	def _unwrap(self, obj):
+		if self.accelerator_ref is None:
+			return obj
+		else:
+			return self.accelerator_ref.unwrap_model(obj)
+
+	def _save(self, obj, path):
+		if self.accelerator_ref is None:
+			save(self._unwrap(obj.state_dict()), path)
+		else:
+			self.accelerator_ref.save(self._unwrap(obj), path)
+
+	def _save_everything(self, suffix="best"):
+		if self.accelerator_ref is not None:
+			self.accelerator_ref.wait_for_everyone()
+		self._save(self.model_ref, join(self.save_path, "model_") + suffix + ".pt")
+		self._save(self.optimizer_ref, join(self.save_path, "optimizer_") + suffix + ".pt")
+		if self.lr_scheduler_ref is not None:
+			self._save(self.lr_scheduler_ref, join(self.save_path, "scheduler_") + suffix + ".pt")
+		if self.EMA_model is not None:
+			self._save(self.EMA_model, join(self.save_path, "ema_model_") + suffix + ".pt",)
 
 	def __init__(
 		self,
@@ -118,6 +160,7 @@ class TrainableDiffusionModel():
 		cross_att_dim=24,
 		noise_cov = lambda x: eye(x),
 		lr_scheduler_ref=None,
+        accelerator_ref=None,
 		EMA_coeff=0.995,
 		EMA_start=2500,
 	):
@@ -131,23 +174,20 @@ class TrainableDiffusionModel():
 		self.noise_scheduler = noise_scheduler
 		self.criterion = criterion
 		self.device = device
+		if accelerator_ref is not None:
+			self.device = accelerator_ref.device
 		self.model_type = model_type
 		self.cross_att_dim = cross_att_dim
 		self.noise_cov = noise_cov
 		self.lr_scheduler_ref = lr_scheduler_ref
-
-		# details of diferrent model types
-		# if self.model_type == "image":
-		# 	self.step_func = self._image_train_step
-		# elif self.model_type == "video":
-		# 	self.step_func = self._video_train_step
+		self.accelerator_ref = accelerator_ref
 
 		# EMA setup
 		if EMA_start <= 0 or EMA_coeff <= 0.0 or EMA_coeff >= 1.0:
 			self.EMA_model = None
 			self.EMA_sched = None
 		else:
-			self.EMA_model = deepcopy(self.model_ref).eval().requires_grad_(False)
+			self.EMA_model = deepcopy(self._unwrap(self.model_ref)).eval().requires_grad_(False)
 			self.EMA_sched = EMA(beta=EMA_coeff, activation_start=EMA_start)
 
 	# def load_image_layers(self, image_model, noise_scale=1e-2):
@@ -206,7 +246,8 @@ class TrainableDiffusionModel():
 		# initial fitting setup
 		losses = empty(0, len(dataloader))
 		end_proc = end_processor(model_ref = self.model_ref, optimizer_ref = self.optimizer_ref, save_path=save_path,
-								 lr_scheduler_ref=self.lr_scheduler_ref, ema_model=self.EMA_model)
+								 lr_scheduler_ref=self.lr_scheduler_ref, ema_model_ref=self.EMA_model,
+								 accelerator_ref=self.accelerator_ref)
 
 		# Going through epochs
 		for _ in range(num_epochs):
@@ -214,24 +255,24 @@ class TrainableDiffusionModel():
 			losses = cat([losses, as_tensor(new_losses).unsqueeze(0)], dim=0)
 
 		# saving last versions of models
-		save(self.model_ref.state_dict(), self.save_path + "model_last.pt")
-		save(self.optimizer_ref.state_dict(), self.save_path + "optimizer_last.pt")
-		if self.lr_scheduler_ref is not None:
-			save(self.lr_scheduler_ref.state_dict(), self.save_path + "scheduler_last.pt")
-		if self.EMA_model is not None:
-			save(self.EMA_model.state_dict(), self.save_path + "ema_model_last.pt")
+		self._save_everything(suffix="last")
 
 		return losses
 
-	def load_state(self, base_dir_path, suffix="best", load_moel=True, load_optimizer=True, load_lr_sched=True):
+	def load_state(self, base_dir_path, suffix="best", load_moel=True, load_optimizer=True,
+				   load_lr_sched=True, load_ema_model=True):
 		if load_moel:
 			self.model_ref.load_state_dict(load(base_dir_path + "model_" + suffix + ".pt"))
 		if load_optimizer:
 			self.optimizer_ref.load_state_dict(load(base_dir_path + "optimizer_" + suffix + ".pt"))
 		if load_lr_sched:
 			self.lr_scheduler_ref.load_state_dict(load(base_dir_path + "scheduler_" + suffix + ".pt"))
+		if load_ema_model:
+			self.EMA_model.load_state_dict(load(base_dir_path + "ema_model" + suffix + ".pt"))
 	
 	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None):
+		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
+
 		shape = [num_samples, num_channels, *pic_size]
 		if self.model_type == "video":
 			shape.insert(2, video_length)
