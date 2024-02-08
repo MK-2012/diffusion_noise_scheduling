@@ -270,8 +270,11 @@ class TrainableDiffusionModel():
 		if load_ema_model:
 			self.EMA_model.load_state_dict(load(base_dir_path + "ema_model" + suffix + ".pt"))
 	
-	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None):
+	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None):
 		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
+		if override_noise_cov is not None:
+			temp_noise_cov = self.noise_cov
+			self.noise_cov = override_noise_cov
 
 		shape = [num_samples, num_channels, *pic_size]
 		if self.model_type == "video":
@@ -290,5 +293,8 @@ class TrainableDiffusionModel():
 				for t in tqdm(self.noise_scheduler.timesteps):
 					residual = self.model_ref(sample, t, prompts).sample
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
+		
+		if override_noise_cov is not None:
+			self.noise_cov = temp_noise_cov
 
 		return ((sample.detach().cpu().clamp(-1, 1) + 1) / 2 * 255).to(uint8)

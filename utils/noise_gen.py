@@ -1,4 +1,4 @@
-from torch import diagonal, diag_embed, zeros, ones, arange, eye, einsum, pow, sqrt, randn
+from torch import diagonal, diag_embed, as_tensor, zeros, ones, arange, eye, einsum, pow, sqrt, randn
 from torch.linalg import eigh
 
 # Noises from the article
@@ -12,7 +12,7 @@ def mixed_noise(length: int, alpha=1.0):
 	return ret
 
 def progressive_noise(length: int, alpha=2.0):
-	mult = alpha / np.sqrt(1 + alpha ** 2)
+	mult = alpha / sqrt(1 + as_tensor(alpha ** 2))
 	mult_row = pow(mult, arange(1, length))
 	ret = eye(length)
 	for i in range(1, length):
