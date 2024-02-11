@@ -45,7 +45,7 @@ class EMA():
 
 # Training API
 class SimpleSaveCallbacker():
-	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar", "save_path"
+	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar", "save_path", "grad_accum_steps"
 
 	def __init__(
 		self,
@@ -57,6 +57,7 @@ class SimpleSaveCallbacker():
 		ema_model_ref=None,
 		pbar=None,
 		mandatory_save_period=500,
+		grad_accum_steps = 1,
 	):
 		self.save_timer = 0
 		self.mandatory_save_period = mandatory_save_period
@@ -68,6 +69,7 @@ class SimpleSaveCallbacker():
 		self.ema_model_ref = ema_model_ref
 		self.pbar = pbar
 		self.save_path = save_path
+		self.grad_accum_steps = grad_accum_steps
 
 	def set_pbar(self, new_pbar):
 		self.pbar = new_pbar
@@ -97,12 +99,13 @@ class SimpleSaveCallbacker():
 	def __call__(self, loss):
 		self.save_timer += 1
 
-		self.optimizer_ref.zero_grad()
 		if self.accelerator_ref is None:
 			loss.backward()
 		else:
 			self.accelerator_ref.backward(loss)
-		self.optimizer_ref.step()
+		if self.save_timer % self.grad_accum_steps == 0:
+			self.optimizer_ref.step()
+			self.optimizer_ref.zero_grad()
 		if self.lr_scheduler_ref is not None:
 			self.lr_scheduler_ref.step()
 
@@ -190,9 +193,6 @@ class TrainableDiffusionModel():
 			self.EMA_model = deepcopy(self._unwrap(self.model_ref)).eval().requires_grad_(False)
 			self.EMA_sched = EMA(beta=EMA_coeff, activation_start=EMA_start)
 
-	# def load_image_layers(self, image_model, noise_scale=1e-2):
-
-
 	def _sample_noise(self, shape):
 		if self.model_type == "video":
 			if callable(self.noise_cov):
@@ -242,12 +242,12 @@ class TrainableDiffusionModel():
 			losses.append(loss.item())
 		return losses
 
-	def fit(self, dataloader, save_path, num_epochs=2, end_processor=SimpleSaveCallbacker):
+	def fit(self, dataloader, save_path, num_epochs=2, end_processor=SimpleSaveCallbacker, grad_accum_steps=1):
 		# initial fitting setup
 		losses = empty(0, len(dataloader))
 		end_proc = end_processor(model_ref = self.model_ref, optimizer_ref = self.optimizer_ref, save_path=save_path,
 								 lr_scheduler_ref=self.lr_scheduler_ref, ema_model_ref=self.EMA_model,
-								 accelerator_ref=self.accelerator_ref)
+								 accelerator_ref=self.accelerator_ref, grad_accum_steps=grad_accum_steps)
 
 		# Going through epochs
 		for _ in range(num_epochs):
@@ -259,16 +259,38 @@ class TrainableDiffusionModel():
 
 		return losses
 
-	def load_state(self, base_dir_path, suffix="best", load_moel=True, load_optimizer=True,
+	def load_weights_from(self, other_model, other_type="base_model"):
+		available_types = {"base_model", "ema_model"}
+		assert other_type in available_types, "You can only load weights into base model or EMA model."
+
+		if other_type == "base_model":
+			self.model_ref.requires_grad_(False)
+			our_params = dict(self._unwrap(self.model_ref).named_parameters())
+		elif other_type == "ema_model":
+			self.EMA_model.requires_grad_(False)
+			our_params = dict(self.EMA_model.named_parameters())
+
+		other_params = dict(other_model.named_parameters())
+
+		for param_name, param in our_params.items():
+			item = other_params.get(param_name)
+			if item is None:
+				continue
+			param.data = item.data.view(param.data.shape)
+
+		if other_type == "base_model":
+			self.model_ref.requires_grad_(True)
+
+	def load_state(self, base_dir_path, suffix="best", load_model=True, load_optimizer=True,
 				   load_lr_sched=True, load_ema_model=True):
-		if load_moel:
-			self.model_ref.load_state_dict(load(base_dir_path + "model_" + suffix + ".pt"))
+		if load_model:
+			self._unwrap(self.model_ref).load_state_dict(load(base_dir_path + "model_" + suffix + ".pt"))
 		if load_optimizer:
-			self.optimizer_ref.load_state_dict(load(base_dir_path + "optimizer_" + suffix + ".pt"))
+			self._unwrap(self.optimizer_ref).load_state_dict(load(base_dir_path + "optimizer_" + suffix + ".pt"))
 		if load_lr_sched:
-			self.lr_scheduler_ref.load_state_dict(load(base_dir_path + "scheduler_" + suffix + ".pt"))
+			self._unwrap(self.lr_scheduler_ref).load_state_dict(load(base_dir_path + "scheduler_" + suffix + ".pt"))
 		if load_ema_model:
-			self.EMA_model.load_state_dict(load(base_dir_path + "ema_model" + suffix + ".pt"))
+			self.EMA_model.load_state_dict(load(base_dir_path + "ema_model_" + suffix + ".pt"))
 	
 	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None):
 		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
