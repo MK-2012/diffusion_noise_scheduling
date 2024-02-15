@@ -3,7 +3,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from os.path import join
 
-from torch import eye, empty, arange, cat, as_tensor, randn, randint, uint8, float32, no_grad, sin, save, load
+from torch import eye, empty, cat, as_tensor, rand, randn, randint, uint8, float32, no_grad, save, load
 from torch.nn import MSELoss
 from torch.cuda import empty_cache
 
@@ -45,7 +45,8 @@ class EMA():
 
 # Training API
 class SimpleSaveCallbacker():
-	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar", "save_path", "grad_accum_steps"
+	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar",\
+				"save_path", "grad_accum_steps"
 
 	def __init__(
 		self,
@@ -125,8 +126,8 @@ class TrainableDiffusionModel():
 	Class for training most of my diffusion models
 	"""
 
-	__slots__ = "model_ref", "optimizer_ref", "noise_scheduler", "criterion", "device", "model_type", "cross_att_dim",\
-				"noise_cov", "lr_scheduler_ref", "accelerator_ref", "EMA_model", "EMA_sched"
+	__slots__ = "model_ref", "optimizer_ref", "noise_scheduler", "criterion", "device", "model_type",\
+				"noise_cov", "lr_scheduler_ref", "accelerator_ref", "EMA_model", "EMA_sched", "save_path"
 
 	available_model_types = {"video", "image"}
 
@@ -160,7 +161,6 @@ class TrainableDiffusionModel():
 		criterion = MSELoss(),
 		device="cpu",
 		model_type="video",
-		cross_att_dim=24,
 		noise_cov = lambda x: eye(x),
 		lr_scheduler_ref=None,
         accelerator_ref=None,
@@ -180,13 +180,13 @@ class TrainableDiffusionModel():
 		if accelerator_ref is not None:
 			self.device = accelerator_ref.device
 		self.model_type = model_type
-		self.cross_att_dim = cross_att_dim
 		self.noise_cov = noise_cov
 		self.lr_scheduler_ref = lr_scheduler_ref
 		self.accelerator_ref = accelerator_ref
+		self.save_path = None
 
 		# EMA setup
-		if EMA_start <= 0 or EMA_coeff <= 0.0 or EMA_coeff >= 1.0:
+		if EMA_start < 0 or EMA_coeff <= 0.0 or EMA_coeff >= 1.0:
 			self.EMA_model = None
 			self.EMA_sched = None
 		else:
@@ -194,23 +194,18 @@ class TrainableDiffusionModel():
 			self.EMA_sched = EMA(beta=EMA_coeff, activation_start=EMA_start)
 
 	def _sample_noise(self, shape):
-		if self.model_type == "video":
-			if callable(self.noise_cov):
-				noise_gen = NormalVideoNoise(cov_matrix = self.noise_cov(shape[2]))
-			else:
-				noise_gen = NormalVideoNoise(cov_matrix = self.noise_cov)
-			return noise_gen.sample(shape).to(self.device)
+		match self.model_type:
+			case "video":
+				if callable(self.noise_cov):
+					noise_gen = NormalVideoNoise(cov_matrix = self.noise_cov(shape[2]))
+				else:
+					noise_gen = NormalVideoNoise(cov_matrix = self.noise_cov)
+				return noise_gen.sample(shape).to(self.device)
 
-		elif self.model_type == "image":
-			return randn(shape, device=self.device, dtype=float32)
+			case "image":
+				return randn(shape, device=self.device, dtype=float32)
 
-	def _sin_embeddings(self, shape):
-		if self.model_type == "video":
-			return sin(arange(1, shape[2] + 1, device=self.device).view(-1, 1) * arange(1, self.cross_att_dim + 1, device=self.device)).tile(shape[0]).view(shape[0], shape[2], -1)
-		elif self.model_type == "image":
-			return sin(arange(1, self.cross_att_dim + 1, device=self.device)).tile(shape[0]).view(shape[0], 1, -1)
-
-	def _train_step(self, batch):
+	def _train_step(self, batch, labels):
 		"""
 		noise_cov -- matrix with the shape of video length or callable that receives video length and
 					returns matrix
@@ -219,20 +214,23 @@ class TrainableDiffusionModel():
 		steps = randint(low=0, high=len(self.noise_scheduler.timesteps), size=(batch.shape[0],), device=self.device)
 		noise = self._sample_noise(batch.shape)
 		noised_videos = self.noise_scheduler.add_noise(batch, noise, steps)
-		hidden_states_encs = self._sin_embeddings(batch.shape)
 		return noise, self.model_ref(
 					noised_videos,
 					steps,
-					hidden_states_encs,
+					labels,
 				).sample
 
-	def _one_epoch(self, dataloader, end_processor):
+	def _one_epoch(self, dataloader, end_processor, class_free_guidance_threshhold):
 		pbar = tqdm(dataloader)
 		end_processor.set_pbar(pbar)
 		losses = []
 		for i, (batch, labels) in enumerate(pbar):
 			batch = batch.to(self.device)
-			noise, predicted_noise = self._train_step(batch)
+			if rand(1) < class_free_guidance_threshhold:
+				labels = None
+			else:
+				labels = labels.to(self.device)
+			noise, predicted_noise = self._train_step(batch, labels)
 
 			loss = self.criterion(noise, predicted_noise)
 			end_processor(loss)
@@ -242,8 +240,9 @@ class TrainableDiffusionModel():
 			losses.append(loss.item())
 		return losses
 
-	def fit(self, dataloader, save_path, num_epochs=2, end_processor=SimpleSaveCallbacker, grad_accum_steps=1):
+	def fit(self, dataloader, save_path, num_epochs=2, end_processor=SimpleSaveCallbacker, grad_accum_steps=1, class_free_guidance_threshhold=0.0):
 		# initial fitting setup
+		self.save_path = save_path
 		losses = empty(0, len(dataloader))
 		end_proc = end_processor(model_ref = self.model_ref, optimizer_ref = self.optimizer_ref, save_path=save_path,
 								 lr_scheduler_ref=self.lr_scheduler_ref, ema_model_ref=self.EMA_model,
@@ -251,7 +250,7 @@ class TrainableDiffusionModel():
 
 		# Going through epochs
 		for _ in range(num_epochs):
-			new_losses = self._one_epoch(dataloader, end_proc)
+			new_losses = self._one_epoch(dataloader, end_proc, class_free_guidance_threshhold=class_free_guidance_threshhold)
 			losses = cat([losses, as_tensor(new_losses).unsqueeze(0)], dim=0)
 
 		# saving last versions of models
@@ -259,16 +258,17 @@ class TrainableDiffusionModel():
 
 		return losses
 
-	def load_weights_from(self, other_model, other_type="base_model"):
+	def load_weights_from(self, other_model, load_to="base_model"):
 		available_types = {"base_model", "ema_model"}
-		assert other_type in available_types, "You can only load weights into base model or EMA model."
+		assert load_to in available_types, "You can only load weights into base model or EMA model."
 
-		if other_type == "base_model":
-			self.model_ref.requires_grad_(False)
-			our_params = dict(self._unwrap(self.model_ref).named_parameters())
-		elif other_type == "ema_model":
-			self.EMA_model.requires_grad_(False)
-			our_params = dict(self.EMA_model.named_parameters())
+		match load_to:
+			case "base_model":
+				self.model_ref.requires_grad_(False)
+				our_params = dict(self._unwrap(self.model_ref).named_parameters())
+			case "ema_model":
+				self.EMA_model.requires_grad_(False)
+				our_params = dict(self.EMA_model.named_parameters())
 
 		other_params = dict(other_model.named_parameters())
 
@@ -278,19 +278,19 @@ class TrainableDiffusionModel():
 				continue
 			param.data = item.data.view(param.data.shape)
 
-		if other_type == "base_model":
+		if load_to == "base_model":
 			self.model_ref.requires_grad_(True)
 
 	def load_state(self, base_dir_path, suffix="best", load_model=True, load_optimizer=True,
 				   load_lr_sched=True, load_ema_model=True):
 		if load_model:
-			self._unwrap(self.model_ref).load_state_dict(load(base_dir_path + "model_" + suffix + ".pt"))
+			self._unwrap(self.model_ref).load_state_dict(load(join(base_dir_path, f"model_{suffix}.pt")))
 		if load_optimizer:
-			self._unwrap(self.optimizer_ref).load_state_dict(load(base_dir_path + "optimizer_" + suffix + ".pt"))
+			self._unwrap(self.optimizer_ref).load_state_dict(load(join(base_dir_path, f"optimizer_{suffix}.pt")))
 		if load_lr_sched:
-			self._unwrap(self.lr_scheduler_ref).load_state_dict(load(base_dir_path + "scheduler_" + suffix + ".pt"))
+			self._unwrap(self.lr_scheduler_ref).load_state_dict(load(join(base_dir_path, f"scheduler_{suffix}.pt")))
 		if load_ema_model:
-			self.EMA_model.load_state_dict(load(base_dir_path + "ema_model_" + suffix + ".pt"))
+			self.EMA_model.load_state_dict(load(join(base_dir_path, f"ema_model_{suffix}.pt")))
 	
 	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None):
 		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
@@ -302,14 +302,17 @@ class TrainableDiffusionModel():
 		if self.model_type == "video":
 			shape.insert(2, video_length)
 
+		if prompts is not None:
+			prompts = prompts.to(self.device)
+
 		with no_grad():
 			sample = self._sample_noise(shape)
-			if prompts is None:
-				prompts = self._sin_embeddings(shape)
 
 			if self.EMA_model is not None:
 				for t in tqdm(self.noise_scheduler.timesteps):
-					residual = self.EMA_model(sample, t, prompts).sample
+					# residual = self.EMA_model(sample, t, prompts).sample
+					residual = self.EMA_model.main_model.forward(sample, t, self.EMA_model.cond_model(prompts).unsqueeze(1)).sample
+
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
 			else:
 				for t in tqdm(self.noise_scheduler.timesteps):

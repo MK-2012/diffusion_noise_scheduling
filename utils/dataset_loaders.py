@@ -51,34 +51,32 @@ class UCFDataset(Dataset):
 
 
 class MovMNISTDataset(Dataset):
-    __slots__ = "data"
+    __slots__ = "videos", "labels"
 
-    def __init__(self, mov_mnist_numpy_path):
-        self.data = from_numpy(np.load(mov_mnist_numpy_path)).permute(1, 0, 2, 3).unsqueeze(1)
-        self.data = self.data.float() / 255 * 2 - 1
+    def __init__(self, base_path):
+        self.videos = from_numpy(np.load(path.join(base_path, "videos.npy"))).permute(0, 2, 1, 3, 4)
+        self.videos = self.videos.float() / 255 * 2 - 1
+        self.labels = from_numpy(np.load(path.join(base_path, "labels.npy")))
 
     def __len__(self):
-        return self.data.shape[0]
+        return self.videos.shape[0]
 
     def __getitem__(self, idx):
-        try:
-            a = len(idx)
-        except:
-            a = 1
-        return self.data[idx], zeros(a, dtype=float32)
+        return self.videos[idx], self.labels[idx]
 
 
 class MovMNISTFrameDataset(Dataset):
-    __slots__ = "data"
+    __slots__ = "images", "labels"
 
-    def __init__(self, mov_mnist_numpy_path):
-        self.data = from_numpy(np.load(mov_mnist_numpy_path))
-        self.data = self.data.view(-1, *self.data.shape[-2:]).unsqueeze(1)
-        self.data = self.data.float() / 255 * 2 - 1
+    def __init__(self, base_path):
+        self.images = from_numpy(np.load(path.join(base_path, "videos.npy")))
+        video_len = self.images.shape[1]
+        self.images = self.images.view(-1, *self.images.shape[-2:]).unsqueeze(1)
+        self.images = self.images.float() / 255 * 2 - 1
+        self.labels = from_numpy(np.load(path.join(base_path, "labels.npy"))).repeat_interleave(video_len)
 
     def __len__(self):
-        return self.data.shape[0]
+        return self.images.shape[0]
 
     def __getitem__(self, idx):
-        a = self.data[idx]
-        return a, zeros(a.shape[0], dtype=float32)
+        return self.images[idx], self.labels[idx]

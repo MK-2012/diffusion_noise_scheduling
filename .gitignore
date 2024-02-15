@@ -3,3 +3,4 @@ datasets/*
 */__pycache__/*
 models/trained/*
 Test_notebook.ipynb
+Video class encoding.ipynb
