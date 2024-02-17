@@ -310,9 +310,8 @@ class TrainableDiffusionModel():
 
 			if self.EMA_model is not None:
 				for t in tqdm(self.noise_scheduler.timesteps):
-					# residual = self.EMA_model(sample, t, prompts).sample
+					# residual = self.EMA_model.forward(sample, t, prompts).sample
 					residual = self.EMA_model.main_model.forward(sample, t, self.EMA_model.cond_model(prompts).unsqueeze(1)).sample
-
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
 			else:
 				for t in tqdm(self.noise_scheduler.timesteps):

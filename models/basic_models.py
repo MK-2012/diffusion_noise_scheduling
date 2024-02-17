@@ -163,7 +163,7 @@ def init_mov_mnist_model(
         cross_attention_dim=cross_att_dim,
         attention_head_dim=cross_att_dim,
         model_type=model_type,
-        class_num=55 if use_labels else 0
+        class_num=55 if use_labels else 0,
     )
     model.to(device)
     model.train()
