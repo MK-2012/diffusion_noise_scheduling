@@ -3,7 +3,8 @@ from tqdm import tqdm
 from copy import deepcopy
 from os.path import join
 
-from torch import eye, empty, cat, as_tensor, rand, randn, randint, uint8, float32, no_grad, save, load
+from torch import eye, empty, cat, as_tensor, rand, randn, randint,\
+				  uint8, float32, no_grad, save, load
 from torch.nn import MSELoss
 from torch.cuda import empty_cache
 
@@ -45,8 +46,9 @@ class EMA():
 
 # Training API
 class SimpleSaveCallbacker():
-	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref", "optimizer_ref", "accelerator_ref", "lr_scheduler_ref", "ema_model_ref", "pbar",\
-				"save_path", "grad_accum_steps"
+	__slots__ = "save_timer", "mandatory_save_period", "min_loss", "model_ref",\
+				"optimizer_ref", "accelerator_ref", "lr_scheduler_ref",\
+				"ema_model_ref", "pbar", "save_path", "grad_accum_steps"
 
 	def __init__(
 		self,
@@ -90,12 +92,15 @@ class SimpleSaveCallbacker():
 	def _save_everything(self, suffix="best"):
 		if self.accelerator_ref is not None:
 			self.accelerator_ref.wait_for_everyone()
-		self._save(self.model_ref, join(self.save_path, "model_") + suffix + ".pt")
-		self._save(self.optimizer_ref, join(self.save_path, "optimizer_") + suffix + ".pt")
-		if self.lr_scheduler_ref is not None:
-			self._save(self.lr_scheduler_ref, join(self.save_path, "scheduler_") + suffix + ".pt")
+		self._save(self.model_ref, join(self.save_path, f"model_{suffix}.pt"))
+		self._save(self.optimizer_ref, join(self.save_path, f"optimizer_{suffix}.pt"))
+		# if self.lr_scheduler_ref is not None:
+			# if self.accelerator_ref is not None:
+			# 	self.accelerator_ref.save_model(self.lr_scheduler_ref, join(self.save_path, "scheduler"))
+			# else:
+			# self._save(self._unwrap(self.lr_scheduler_ref), join(self.save_path, f"scheduler_{suffix}.pt"))
 		if self.ema_model_ref is not None:
-			self._save(self.ema_model_ref, join(self.save_path, "ema_model_") + suffix + ".pt",)
+			self._save(self.ema_model_ref, join(self.save_path, f"ema_model_{suffix}.pt"))
 
 	def __call__(self, loss):
 		self.save_timer += 1
@@ -126,8 +131,9 @@ class TrainableDiffusionModel():
 	Class for training most of my diffusion models
 	"""
 
-	__slots__ = "model_ref", "optimizer_ref", "noise_scheduler", "criterion", "device", "model_type",\
-				"noise_cov", "lr_scheduler_ref", "accelerator_ref", "EMA_model", "EMA_sched", "save_path"
+	__slots__ = "model_ref", "optimizer_ref", "noise_scheduler", "criterion",\
+				"device", "model_type", "noise_cov", "lr_scheduler_ref",\
+				"accelerator_ref", "EMA_model", "EMA_sched", "save_path"
 
 	available_model_types = {"video", "image"}
 
@@ -146,12 +152,12 @@ class TrainableDiffusionModel():
 	def _save_everything(self, suffix="best"):
 		if self.accelerator_ref is not None:
 			self.accelerator_ref.wait_for_everyone()
-		self._save(self.model_ref, join(self.save_path, "model_") + suffix + ".pt")
-		self._save(self.optimizer_ref, join(self.save_path, "optimizer_") + suffix + ".pt")
+		self._save(self.model_ref, join(self.save_path, f"model_{suffix}.pt"))
+		self._save(self.optimizer_ref, join(self.save_path, f"optimizer_{suffix}.pt"))
 		if self.lr_scheduler_ref is not None:
-			self._save(self.lr_scheduler_ref, join(self.save_path, "scheduler_") + suffix + ".pt")
+			self._save(self.lr_scheduler_ref, join(self.save_path, f"scheduler_{suffix}.pt"))
 		if self.EMA_model is not None:
-			self._save(self.EMA_model, join(self.save_path, "ema_model_") + suffix + ".pt",)
+			self._save(self.EMA_model, join(self.save_path, f"ema_model_{suffix}.pt"))
 
 	def __init__(
 		self,
@@ -211,7 +217,9 @@ class TrainableDiffusionModel():
 					returns matrix
 		"""
 
-		steps = randint(low=0, high=len(self.noise_scheduler.timesteps), size=(batch.shape[0],), device=self.device)
+		steps = randint(
+			low=0, high=len(self.noise_scheduler.timesteps),
+			size=(batch.shape[0],), device=self.device)
 		noise = self._sample_noise(batch.shape)
 		noised_videos = self.noise_scheduler.add_noise(batch, noise, steps)
 		return noise, self.model_ref(
@@ -235,22 +243,32 @@ class TrainableDiffusionModel():
 			loss = self.criterion(noise, predicted_noise)
 			end_processor(loss)
 			if self.EMA_model is not None:
-				self.EMA_sched.step_ema(self.EMA_model, self.model_ref)
+				self.EMA_sched.step_ema(self.EMA_model, self._unwrap(self.model_ref))
 
 			losses.append(loss.item())
 		return losses
 
-	def fit(self, dataloader, save_path, num_epochs=2, end_processor=SimpleSaveCallbacker, grad_accum_steps=1, class_free_guidance_threshhold=0.0):
+	def fit(
+		self, dataloader, save_path, num_epochs=2,
+		end_processor=SimpleSaveCallbacker, grad_accum_steps=1,
+		class_free_guidance_threshhold=0.0,
+	):
 		# initial fitting setup
 		self.save_path = save_path
 		losses = empty(0, len(dataloader))
-		end_proc = end_processor(model_ref = self.model_ref, optimizer_ref = self.optimizer_ref, save_path=save_path,
-								 lr_scheduler_ref=self.lr_scheduler_ref, ema_model_ref=self.EMA_model,
-								 accelerator_ref=self.accelerator_ref, grad_accum_steps=grad_accum_steps)
+		end_proc = end_processor(
+			model_ref = self.model_ref, optimizer_ref = self.optimizer_ref,
+			save_path=save_path, lr_scheduler_ref=self.lr_scheduler_ref,
+			ema_model_ref=self.EMA_model, accelerator_ref=self.accelerator_ref,
+			grad_accum_steps=grad_accum_steps,
+		)
 
 		# Going through epochs
 		for _ in range(num_epochs):
-			new_losses = self._one_epoch(dataloader, end_proc, class_free_guidance_threshhold=class_free_guidance_threshhold)
+			new_losses = self._one_epoch(
+				dataloader, end_proc,
+				class_free_guidance_threshhold=class_free_guidance_threshhold
+			)
 			losses = cat([losses, as_tensor(new_losses).unsqueeze(0)], dim=0)
 
 		# saving last versions of models
@@ -260,7 +278,8 @@ class TrainableDiffusionModel():
 
 	def load_weights_from(self, other_model, load_to="base_model"):
 		available_types = {"base_model", "ema_model"}
-		assert load_to in available_types, "You can only load weights into base model or EMA model."
+		assert load_to in available_types,\
+		"You can only load weights into base model or EMA model."
 
 		match load_to:
 			case "base_model":
@@ -284,13 +303,13 @@ class TrainableDiffusionModel():
 	def load_state(self, base_dir_path, suffix="best", load_model=True, load_optimizer=True,
 				   load_lr_sched=True, load_ema_model=True):
 		if load_model:
-			self._unwrap(self.model_ref).load_state_dict(load(join(base_dir_path, f"model_{suffix}.pt")))
+			self._unwrap(self.model_ref).load_state_dict(load(join(base_dir_path, f"model_{suffix}.pt"), map_location="cpu"))
 		if load_optimizer:
-			self._unwrap(self.optimizer_ref).load_state_dict(load(join(base_dir_path, f"optimizer_{suffix}.pt")))
+			self._unwrap(self.optimizer_ref).load_state_dict(load(join(base_dir_path, f"optimizer_{suffix}.pt"), map_location="cpu"))
 		if load_lr_sched:
-			self._unwrap(self.lr_scheduler_ref).load_state_dict(load(join(base_dir_path, f"scheduler_{suffix}.pt")))
+			self._unwrap(self.lr_scheduler_ref).load_state_dict(load(join(base_dir_path, f"scheduler_{suffix}.pt"), map_location="cpu"))
 		if load_ema_model:
-			self.EMA_model.load_state_dict(load(join(base_dir_path, f"ema_model_{suffix}.pt")))
+			self.EMA_model.load_state_dict(load(join(base_dir_path, f"ema_model_{suffix}.pt"), map_location="cpu"))
 	
 	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None):
 		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
@@ -309,9 +328,14 @@ class TrainableDiffusionModel():
 			sample = self._sample_noise(shape)
 
 			if self.EMA_model is not None:
+				try:
+					_ = self.EMA_model.use_cond
+				except:
+					self.EMA_model.use_cond = prompts is not None
+
 				for t in tqdm(self.noise_scheduler.timesteps):
-					# residual = self.EMA_model.forward(sample, t, prompts).sample
-					residual = self.EMA_model.main_model.forward(sample, t, self.EMA_model.cond_model(prompts).unsqueeze(1)).sample
+					residual = self.EMA_model.forward(sample, t, prompts).sample
+					# residual = self.EMA_model.main_model.forward(sample, t, self.EMA_model.cond_model(prompts).unsqueeze(1)).sample
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
 			else:
 				for t in tqdm(self.noise_scheduler.timesteps):
