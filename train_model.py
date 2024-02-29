@@ -9,9 +9,11 @@ from models.basic_models import *
 
 from utils.noise_gen import *
 
+from functools import partial
+
 
 def main():
-    EFFECTIVE_BACTH_SIZE = 32
+    EFFECTIVE_BACTH_SIZE = 2
     REAL_BATCH_SIZE = 2
     gradient_accumulation_steps = int(ceil(EFFECTIVE_BACTH_SIZE / REAL_BATCH_SIZE))
     DEVICE = "cuda:1"
@@ -74,6 +76,7 @@ def main():
         cross_att_dim=4,
     )
 
+    modified_mixed_noise = partial(mixed_noise, alpha=0.1)
     trainer_video = TrainableDiffusionModel(
         model_ref = model,
         optimizer_ref = optimizer,
@@ -83,7 +86,7 @@ def main():
         device=DEVICE,
         model_type="video",
         EMA_start=5000,
-        noise_cov=mixed_noise,
+        noise_cov=modified_mixed_noise,
     )
 
     trainer_video.load_weights_from(trainer_image.model_ref)
@@ -103,13 +106,13 @@ def main():
 
     test_losses = trainer_video.fit(
         dataloader = MovMNIST_dataloader,
-        save_path = "./models/trained/labeled_mov_mnist_mixed_noise/",
+        save_path = "./models/trained/labeled_mov_mnist_mod_mixed_noise_eff_batch2/",
         num_epochs = 7,
         grad_accum_steps = gradient_accumulation_steps,
         class_free_guidance_threshhold = 3e-2,
     )
 
-    torch.save(test_losses, "./models/trained/labeled_mov_mnist_mixed_noise/losses.pt")
+    torch.save(test_losses, "./models/trained/labeled_mov_mod_mnist_mixed_noise_eff_batch2/losses.pt")
 
 
 if __name__ == "__main__":

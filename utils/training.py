@@ -4,7 +4,8 @@ from copy import deepcopy
 from os.path import join
 
 from torch import eye, empty, cat, as_tensor, rand, randn, randint,\
-				  uint8, float32, no_grad, save, load
+				  uint8, float32, no_grad, save, load, set_float32_matmul_precision
+from torch import compile as comp
 from torch.nn import MSELoss
 from torch.cuda import empty_cache
 
@@ -311,7 +312,17 @@ class TrainableDiffusionModel():
 		if load_ema_model:
 			self.EMA_model.load_state_dict(load(join(base_dir_path, f"ema_model_{suffix}.pt"), map_location="cpu"))
 	
-	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None):
+	def compile(self):
+		set_float32_matmul_precision('high')
+		self.model_ref = comp(self.model_ref)
+		if self.EMA_model is not None:
+			try:
+				_ = self.EMA_model.use_cond
+			except:
+				self.EMA_model.use_cond = True
+			self.EMA_model = comp(self.EMA_model)
+
+	def sample(self, num_samples, prompts=None, pic_size=(64, 64), num_channels=1, video_length=None, override_noise_cov=None, disable_tqdm=False):
 		assert isinstance(video_length, int) or self.model_type != "video", "You must specify video_length when generating videos"
 		if override_noise_cov is not None:
 			temp_noise_cov = self.noise_cov
@@ -333,12 +344,11 @@ class TrainableDiffusionModel():
 				except:
 					self.EMA_model.use_cond = prompts is not None
 
-				for t in tqdm(self.noise_scheduler.timesteps):
+				for t in tqdm(self.noise_scheduler.timesteps, disable=disable_tqdm):
 					residual = self.EMA_model.forward(sample, t, prompts).sample
-					# residual = self.EMA_model.main_model.forward(sample, t, self.EMA_model.cond_model(prompts).unsqueeze(1)).sample
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
 			else:
-				for t in tqdm(self.noise_scheduler.timesteps):
+				for t in tqdm(self.noise_scheduler.timesteps, disable=disable_tqdm):
 					residual = self.model_ref(sample, t, prompts).sample
 					sample = self.noise_scheduler.step(model_output=residual, timestep=t, sample=sample).prev_sample
 		
