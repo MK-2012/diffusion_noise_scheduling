@@ -15,6 +15,9 @@ def img_psnr(img1, img2):
     return psnr
 
 def trans(x):
+    if x.max() == 255:
+        x = x.float() / 255
+
     return x
 
 def calculate_psnr(videos1, videos2):

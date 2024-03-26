@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 from json import dump
-from numpy import load as np.load
+from numpy import load as np_load
 
 from metrics.common_metrics_on_video_quality.calculate_fvd import calculate_fvd
 from metrics.common_metrics_on_video_quality.calculate_psnr import calculate_psnr
@@ -12,12 +12,14 @@ from torch import load, as_tensor
 
 def _load_dataset(path, device="cpu"):
 	try:
-		dataset = load(base_path, map_location=device)
+		dataset = load(path, map_location=device)
 	except:
 		try:
-			base_dataset = as_tensor(np.load(base_path), device=device)
+			dataset = as_tensor(np_load(path), device=device)
 		except:
-			raise Exception("Cannot load this dataset format")
+			raise Exception(f"Cannot load this dataset format: {path}")
+
+	return dataset
 
 def compare(base_path, compare_path, base_type="dataset", compare_type="dataset", device="cuda:0"):
 	if base_type != "dataset" or compare_type != "dataset":
@@ -25,13 +27,16 @@ def compare(base_path, compare_path, base_type="dataset", compare_type="dataset"
 	
 	base_dataset = _load_dataset(base_path)
 	comp_dataset = _load_dataset(compare_path)
+	len = min(base_dataset.shape[0], comp_dataset.shape[0])
+	base_dataset = base_dataset[:len]
+	comp_dataset = comp_dataset[:len].permute(0, 2, 1, 3, 4)
 
 	result = {}
-	result['fvd'] = calculate_fvd(videos1, videos2, device, method='styleganv')
-	# result['fvd'] = calculate_fvd(videos1, videos2, device, method='videogpt')
-	result['ssim'] = calculate_ssim(videos1, videos2)
-	result['psnr'] = calculate_psnr(videos1, videos2)
-	result['lpips'] = calculate_lpips(videos1, videos2, device)
+	result['fvd'] = calculate_fvd(base_dataset, comp_dataset, device, method='styleganv')
+	# result['fvd'] = calculate_fvd(base_dataset, comp_dataset, device, method='videogpt')
+	result['ssim'] = calculate_ssim(base_dataset, comp_dataset)
+	result['psnr'] = calculate_psnr(base_dataset, comp_dataset)
+	result['lpips'] = calculate_lpips(base_dataset, comp_dataset, device)
 
 	return result
 
@@ -48,7 +53,7 @@ if __name__ == "__main__":
 	parser.add_argument("--compare_path")
 	parser.add_argument("--save_path")
 	parser.add_argument("--base_type", default="dataset", choices=["dataset", "model_weights"])
-	parser.add_argument("--comparetype", default="dataset", choices=["dataset", "model_weights"])
+	parser.add_argument("--compare_type", default="dataset", choices=["dataset", "model_weights"])
 	parser.add_argument("--device", default="cuda:0")
 
 	args = parser.parse_args()

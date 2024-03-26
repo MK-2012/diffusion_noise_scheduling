@@ -17,6 +17,9 @@ def trans(x):
     if x.shape[-3] == 1:
         x = x.repeat(1, 1, 3, 1, 1)
 
+    if x.max() == 255:
+        x = x.float() / 255
+
     # value range [0, 1] -> [-1, 1]
     x = x * 2 - 1
 

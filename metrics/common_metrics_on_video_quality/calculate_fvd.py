@@ -7,6 +7,9 @@ def trans(x):
     if x.shape[-3] == 1:
         x = x.repeat(1, 1, 3, 1, 1)
 
+    if x.max() == 255:
+        x = x.float() / 255
+
     # permute BTCHW -> BCTHW
     x = x.permute(0, 2, 1, 3, 4) 
 
@@ -15,11 +18,11 @@ def trans(x):
 def calculate_fvd(videos1, videos2, device, method='styleganv'):
 
     if method == 'styleganv':
-        from fvd.styleganv.fvd import get_fvd_feats, frechet_distance, load_i3d_pretrained
+        from .fvd.styleganv.fvd import get_fvd_feats, frechet_distance, load_i3d_pretrained
     elif method == 'videogpt':
-        from fvd.videogpt.fvd import load_i3d_pretrained
-        from fvd.videogpt.fvd import get_fvd_logits as get_fvd_feats
-        from fvd.videogpt.fvd import frechet_distance
+        from .fvd.videogpt.fvd import load_i3d_pretrained
+        from .fvd.videogpt.fvd import get_fvd_logits as get_fvd_feats
+        from .fvd.videogpt.fvd import frechet_distance
 
     print("calculate_fvd...")
 

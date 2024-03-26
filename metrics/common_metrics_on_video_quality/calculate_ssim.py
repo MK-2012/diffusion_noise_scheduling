@@ -42,6 +42,9 @@ def calculate_ssim_function(img1, img2):
         raise ValueError('Wrong input image dimensions.')
 
 def trans(x):
+    if x.max() == 255:
+        x = x.float() / 255
+
     return x
 
 def calculate_ssim(videos1, videos2):
