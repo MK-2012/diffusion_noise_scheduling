@@ -13,9 +13,9 @@ from utils.noise_gen import *
 
 
 def main():
-	GPU_NUM = 2
-	EFFECTIVE_BACTH_SIZE = 32
-	REAL_BATCH_SIZE = 2
+	GPU_NUM = 1
+	EFFECTIVE_BACTH_SIZE = 64
+	REAL_BATCH_SIZE = 8
 	gradient_accumulation_steps = int(ceil(EFFECTIVE_BACTH_SIZE / REAL_BATCH_SIZE))
 	conf = ProjectConfiguration(automatic_checkpoint_naming=True)
 
@@ -31,19 +31,16 @@ def main():
 		shuffle=True, batch_size=68
 	)
 
-	model_frame, noise_scheduler_frame, optimizer_frame, lr_scheduler_frame, criterion_frame = init_mov_mnist_model(
+	model_frame, noise_scheduler_frame, optimizer_frame, lr_scheduler_frame, criterion_frame = init_big_mov_mnist_model(
 		lr_warmup_steps=100,
 		num_epochs=7,
 		beta_start=1.17e-3,
 		beta_end=1.88e-1,
-		object_cnt = len(MovMNIST_frame_dataloader) // GPU_NUM,
+		object_cnt = len(MovMNIST_frame_dataloader),
 		device=DEVICE,
 		model_type="image",
 		use_labels=True,
 	)
-	# model, optimizer, MovMNIST_frame_dataloader, lr_scheduler = accelerator.prepare(
-	#     model, optimizer, MovMNIST_frame_dataloader, lr_scheduler,
-	# )
 
 	trainer_image = TrainableDiffusionModel(
 		model_ref = model_frame,
@@ -66,20 +63,20 @@ def main():
 	# torch.save(test_losses, "./models/trained/labeled_mov_mnist_frames/losses.pt")
 
 	trainer_image.load_state(
-		base_dir_path="./models/trained/labeled_mov_mnist_frames/",
+		base_dir_path="./models/trained/labeled_mov_mnist_frames_big/",
 		suffix="last",
 		load_optimizer=False, load_lr_sched=False, load_ema_model=True,
 	)
 
 	MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled/")
-	MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=2)
+	MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=REAL_BATCH_SIZE)
 
-	model, noise_scheduler, optimizer, lr_scheduler, criterion = init_mov_mnist_model(
+	model, noise_scheduler, optimizer, lr_scheduler, criterion = init_big_mov_mnist_model(
 		lr_warmup_steps=100,
 		num_epochs=7,
 		beta_start=1.17e-3,
-		beta_end=1.88e-1,   
-		object_cnt = len(MovMNIST_dataloader) // GPU_NUM,
+		beta_end=1.88e-1,
+		object_cnt = len(MovMNIST_dataloader),
 		device=DEVICE,
 		model_type="video",
 		use_labels=True,
@@ -91,7 +88,7 @@ def main():
 	)
 
 	trainer_video = TrainableDiffusionModel(
-		accelerator_ref = accelerator,
+		accelerator_ref=accelerator,
 		model_ref = model,
 		optimizer_ref = optimizer,
 		lr_scheduler_ref=lr_scheduler,
@@ -99,8 +96,8 @@ def main():
 		criterion = criterion,
 		device=DEVICE,
 		model_type="video",
-		EMA_start=5000,
-		noise_cov=mixed_noise,
+		EMA_start=1200,
+		noise_cov=lambda x: torch.eye(x),
 	)
 
 	trainer_video.load_weights_from(trainer_image.model_ref)
@@ -120,12 +117,12 @@ def main():
 
 	test_losses = trainer_video.fit(
 		dataloader = MovMNIST_dataloader,
-		save_path = "./models/trained/labeled_mov_mnist_mixed_noise/",
+		save_path = "./models/trained/labeled_mov_mnist_uncorr_noise_big/",
 		num_epochs = 7,
 		class_free_guidance_threshhold = 3e-2,
 	)
 
-	accelerator.save(test_losses, "./models/trained/labeled_mov_mnist_mixed_noise/losses.pt")
+	accelerator.save(test_losses, "./models/trained/labeled_mov_mnist_uncorr_noise_big/losses.pt")
 	# torch.save(test_losses, "./models/trained/labeled_mov_mnist/losses.pt")
 
 

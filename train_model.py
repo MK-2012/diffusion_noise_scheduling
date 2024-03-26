@@ -13,10 +13,10 @@ from functools import partial
 
 
 def main():
-    EFFECTIVE_BACTH_SIZE = 2
-    REAL_BATCH_SIZE = 2
+    EFFECTIVE_BACTH_SIZE = 8
+    REAL_BATCH_SIZE = 8
     gradient_accumulation_steps = int(ceil(EFFECTIVE_BACTH_SIZE / REAL_BATCH_SIZE))
-    DEVICE = "cuda:1"
+    DEVICE = "cuda:0"
 
     MovMNIST_frame_dataset = MovMNISTFrameDataset("./datasets/moving_mnist_labeled/")
     MovMNIST_frame_dataloader = DataLoader(
@@ -62,13 +62,13 @@ def main():
     )
 
     MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled/")
-    MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=2)
+    MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=REAL_BATCH_SIZE)
 
     model, noise_scheduler, optimizer, lr_scheduler, criterion = init_mov_mnist_model(
         lr_warmup_steps=100,
         num_epochs=7,
         beta_start=1.17e-3,
-        beta_end=1.88e-1,   
+        beta_end=1.88e-1,
         object_cnt = len(MovMNIST_dataloader),
         device=DEVICE,
         model_type="video",
@@ -76,7 +76,7 @@ def main():
         cross_att_dim=4,
     )
 
-    modified_mixed_noise = partial(mixed_noise, alpha=0.1)
+    # sample_noise_corr = torch.load("./sample_corr_matrix.pt", map_location="cpu").float()
     trainer_video = TrainableDiffusionModel(
         model_ref = model,
         optimizer_ref = optimizer,
@@ -85,8 +85,8 @@ def main():
         criterion = criterion,
         device=DEVICE,
         model_type="video",
-        EMA_start=5000,
-        noise_cov=modified_mixed_noise,
+        EMA_start=1200,
+        noise_cov=lambda x: torch.eye(x),
     )
 
     trainer_video.load_weights_from(trainer_image.model_ref)
@@ -104,15 +104,18 @@ def main():
     torch.cuda.empty_cache()
     collect()
 
+    # trainer_video.compile(mode_ema=None)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_flash_sdp(False)
     test_losses = trainer_video.fit(
         dataloader = MovMNIST_dataloader,
-        save_path = "./models/trained/labeled_mov_mnist_mod_mixed_noise_eff_batch2/",
+        save_path = "./models/trained/labeled_mov_mnist_uncorr_noise2/",
         num_epochs = 7,
         grad_accum_steps = gradient_accumulation_steps,
         class_free_guidance_threshhold = 3e-2,
     )
 
-    torch.save(test_losses, "./models/trained/labeled_mov_mod_mnist_mixed_noise_eff_batch2/losses.pt")
+    torch.save(test_losses, "./models/trained/labeled_mov_mnist_uncorr_noise2/losses.pt")
 
 
 if __name__ == "__main__":

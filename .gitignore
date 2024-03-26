@@ -4,3 +4,4 @@ datasets/*
 models/trained/*
 Test_notebook.ipynb
 Video class encoding.ipynb
+.pkl_memoize_py3
