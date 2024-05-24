@@ -46,5 +46,7 @@ class NormalVideoNoise():
 			self.a = zeros(self.d)
 
 	def sample(self, shape):
+		assert(len(shape) == 5), "Должно быть именно видео"
+
 		return einsum("abj...,ij->abi...", randn(shape), self.V) + \
 			   self.a.repeat(list(shape[3:]) + [1]).permute(-1, *arange(len(shape) - 3))

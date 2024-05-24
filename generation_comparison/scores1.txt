@@ -1,0 +1,6 @@
+Uncorr noise: Final average warping_error: 0.014136438257992268, Total videos: 1000
+Prog noise:   Final average warping_error: 0.013773467391729355, Total videos: 1000
+
+--- Big models ---
+Uncorr noise: Final average warping_error: 0.010082575492560863, Total videos: 1000
+Prog noise:   Final average warping_error: 0.010074752382934093, Total videos: 1000

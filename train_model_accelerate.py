@@ -7,7 +7,7 @@ from accelerate.utils import ProjectConfiguration
 
 from utils.training import *
 from utils.dataset_loaders import *
-from models.basic_models import *
+from basic_models import *
 
 from utils.noise_gen import *
 

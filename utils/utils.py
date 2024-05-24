@@ -8,6 +8,12 @@ from imageio import mimsave
 from torchvision.io import write_video, write_png
 
 
+# Special loss with time correlations
+def video_loss(pred, true, gram_matrix):
+	diff = pred - true
+	diff *= einsum("abi...,ij->abj...", diff, gram_matrix)
+	return mean(diff)
+
 # Simple callback for drawing frames from the first video of the batch
 def draw_single_vid_frames(videos):
 	clear_output(wait=True)

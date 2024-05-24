@@ -2,6 +2,7 @@ from numpy import inf
 from tqdm import tqdm
 from copy import deepcopy
 from os.path import join
+from inspect import Signature
 
 from torch import (
     eye,
@@ -168,6 +169,7 @@ class TrainableDiffusionModel:
         "optimizer_ref",
         "noise_scheduler",
         "criterion",
+        "loss_arg_cnt",
         "device",
         "model_type",
         "noise_cov",
@@ -205,6 +207,12 @@ class TrainableDiffusionModel:
         if self.EMA_model is not None:
             self._save(self.EMA_model, join(self.save_path, f"ema_model_{suffix}.pt"))
 
+    def _set_noise_cov(self, new_noise_cov):
+        if callable(new_noise_cov):
+            self.noise_cov = new_noise_cov
+        else:
+            self.noise_cov = lambda _: new_noise_cov
+
     def __init__(
         self,
         model_ref,
@@ -230,14 +238,12 @@ class TrainableDiffusionModel:
         self.optimizer_ref = optimizer_ref
         self.noise_scheduler = noise_scheduler
         self.criterion = criterion
+        self.loss_arg_cnt = len(Signature.from_callable(criterion).parameters)
         self.device = device
         if accelerator_ref is not None:
             self.device = accelerator_ref.device
         self.model_type = model_type
-        if callable(noise_cov):
-            self.noise_cov = noise_cov
-        else:
-            self.noise_cov = lambda _: noise_cov
+        self._set_noise_cov(noise_cov)
         self.lr_scheduler_ref = lr_scheduler_ref
         self.accelerator_ref = accelerator_ref
         self.save_path = None
@@ -281,7 +287,7 @@ class TrainableDiffusionModel:
         )
 
     def _one_epoch(self, dataloader, end_processor, class_free_guidance_threshhold):
-        pbar = tqdm(dataloader)
+        pbar = tqdm(dataloader, leave=False)
         end_processor.set_pbar(pbar)
         losses = []
         for i, (batch, labels) in enumerate(pbar):
@@ -290,16 +296,16 @@ class TrainableDiffusionModel:
                 self.inv_corr_matrix = m_inv(self.noise_cov(batch.shape[2])).to(
                     self.device
                 )
-                # self.inv_corr_matrix = self.noise_cov(batch.shape[2]).to(self.device)
-                self.inv_corr_matrix /= t_max(t_abs(self.inv_corr_matrix))
+                self.inv_corr_matrix /= self.inv_corr_matrix.abs().max()
 
-            if rand(1) < class_free_guidance_threshhold:
-                labels = None
-            else:
-                labels = labels.to(self.device)
+            labels[rand(*labels.shape) < class_free_guidance_threshhold] = -1
+            labels = labels.to(self.device)
             noise, predicted_noise = self._train_step(batch, labels)
 
-            loss = self.criterion(noise, predicted_noise, self.inv_corr_matrix)
+            if self.loss_arg_cnt == 3:
+                loss = self.criterion(noise, predicted_noise, self.inv_corr_matrix)
+            else:
+                loss = self.criterion(noise, predicted_noise)
             end_processor(loss)
             if self.EMA_model is not None:
                 self.EMA_sched.step_ema(self.EMA_model, self._unwrap(self.model_ref))
@@ -330,7 +336,7 @@ class TrainableDiffusionModel:
         )
 
         # Going through epochs
-        for _ in range(num_epochs):
+        for _ in tqdm(range(num_epochs)):
             new_losses = self._one_epoch(
                 dataloader,
                 end_proc,
@@ -413,16 +419,24 @@ class TrainableDiffusionModel:
         num_channels=1,
         num_inference_steps=None,
         video_length=None,
-        override_noise_cov=None,
         disable_tqdm=False,
         convert_uint=True,
+        override_noise_cov=None,
+        override_noise_scheduler=None,
     ):
         assert (
             isinstance(video_length, int) or self.model_type != "video"
         ), "You must specify video_length when generating videos"
+        
+        if override_noise_scheduler is not None:
+            old_scheduler = deepcopy(self.noise_scheduler)
+            self.noise_scheduler = override_noise_scheduler
+
         if override_noise_cov is not None:
-            temp_noise_cov = self.noise_cov
-            self.noise_cov = override_noise_cov
+            old_noise_cov = self.noise_cov
+            self._set_noise_cov(override_noise_cov)
+            if hasattr(self.noise_scheduler, "override_noise_cov"):
+                self.noise_scheduler.override_noise_cov(override_noise_cov)
 
         shape = [num_samples, num_channels, *pic_size]
         if self.model_type == "video":
@@ -432,7 +446,10 @@ class TrainableDiffusionModel:
             prompts = prompts.to(self.device)
 
         if num_inference_steps is not None:
-            old_timesteps = self.noise_scheduler.timesteps
+            try:
+                old_timesteps = self.noise_scheduler.config.num_train_timesteps
+            except:
+                old_timesteps = self.noise_scheduler.num_train_timesteps
             self.noise_scheduler.set_timesteps(num_inference_steps=num_inference_steps)
 
         with no_grad():
@@ -445,22 +462,29 @@ class TrainableDiffusionModel:
                     self.EMA_model.use_cond = prompts is not None
 
                 for t in tqdm(self.noise_scheduler.timesteps, disable=disable_tqdm):
+                    sample = self.noise_scheduler.scale_model_input(sample, t)
                     residual = self.EMA_model.forward(sample, t, prompts).sample
                     sample = self.noise_scheduler.step(
                         model_output=residual, timestep=t, sample=sample
                     ).prev_sample
             else:
                 for t in tqdm(self.noise_scheduler.timesteps, disable=disable_tqdm):
+                    sample = self.noise_scheduler.scale_model_input(sample, t)
                     residual = self.model_ref(sample, t, prompts).sample
                     sample = self.noise_scheduler.step(
                         model_output=residual, timestep=t, sample=sample
                     ).prev_sample
 
         if override_noise_cov is not None:
-            self.noise_cov = temp_noise_cov
+            self._set_noise_cov(old_noise_cov)
+            if hasattr(self.noise_scheduler, "override_noise_cov"):
+                self.noise_scheduler.override_noise_cov(old_noise_cov)
 
         if num_inference_steps is not None:
-            self.noise_scheduler.set_timesteps(timesteps=old_timesteps)
+            self.noise_scheduler.set_timesteps(num_inference_steps=old_timesteps)
+
+        if override_noise_scheduler is not None:
+            self.noise_scheduler = old_scheduler
 
         if convert_uint:
             return ((sample.detach().cpu().clamp(-1, 1) + 1) / 2 * 255).to(uint8)

@@ -5,7 +5,7 @@ from functools import partial
 from utils.noise_gen import *
 from utils.training import *
 from utils.dataset_loaders import *
-from models.basic_models import *
+from .basic_models import *
 
 from torch import eye, cat, save, empty
 from torch.utils.data import DataLoader
