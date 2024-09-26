@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 
 def generate_samples(labels, cov_function, obj_cnt: int, weights_name: str, device: str="cuda:0", n=1000, batch_size=10):
-    sampler = init_big_mov_mnist_model(
+    sampler = init_mov_mnist_model(
         lr_warmup_steps=100,
         num_epochs=14,
         beta_start=1.17e-3,
@@ -27,7 +27,7 @@ def generate_samples(labels, cov_function, obj_cnt: int, weights_name: str, devi
         noise_cov_matrix = cov_function(20),
     )
 
-    sampler.load_state(base_dir_path=f"./models/labeled_mov_mnist/{weights_name}/", suffix="last",
+    sampler.load_state(base_dir_path=f"./models/labeled_mov_mnist/videos/{weights_name}/", suffix="last",
                                load_optimizer=False, load_lr_sched=False, load_ema_model=True)
     sampler.EMA_model.cross_att_dim = 4
     sampler.EMA_model.need_time_embs = False
@@ -52,19 +52,19 @@ def generate_samples(labels, cov_function, obj_cnt: int, weights_name: str, devi
 
 
 if __name__ == "__main__":
-    MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled/")
-    MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=14)
+    MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled_fast/")
+    # MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=14)
 
     N = 1000
     BATCH_SIZE=10
     labels = torch.randint(low=0, high=55, size=(N,))
 
-    dev = "cuda:0"
+    dev = "cuda:1"
 
 
     # Uncorr noise
-    generate_samples(labels=labels, obj_cnt=len(MovMNIST_dataset), weights_name="uncorr_noise_big", device=dev, n=N, batch_size=BATCH_SIZE, cov_function=torch.eye)
-
+    # generate_samples(labels=labels, obj_cnt=len(MovMNIST_dataset), weights_name="uncorr_noise", device=dev, n=N, batch_size=BATCH_SIZE, cov_function=torch.eye)
 
     # Progressive noise
-    generate_samples(labels=labels, obj_cnt=len(MovMNIST_dataset), weights_name="prog_noise_big", device=dev, n=N, batch_size=BATCH_SIZE, cov_function=progressive_noise)
+    alpha_prog_noise = partial(progressive_noise, alpha=0.5)
+    generate_samples(labels=labels, obj_cnt=len(MovMNIST_dataset), weights_name="uncorr_noise_fast", device=dev, n=N, batch_size=BATCH_SIZE, cov_function=torch.eye)

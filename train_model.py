@@ -25,7 +25,7 @@ def main():
         shuffle=True, batch_size=68
     )
 
-    trainer_image = init_big_mov_mnist_model(
+    trainer_image = init_mov_mnist_model(
         lr_warmup_steps=100,
         num_epochs=7,
         beta_start=1.17e-3,
@@ -38,16 +38,16 @@ def main():
     )
 
     trainer_image.load_state(
-        base_dir_path="./models/labeled_mov_mnist/frames_big/",
+        base_dir_path="./models/labeled_mov_mnist/frames/basic/",
         suffix="last",
         load_optimizer=False, load_lr_sched=False, load_ema_model=True,
     )
 
-    MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled/")
+    MovMNIST_dataset = MovMNISTDataset("./datasets/moving_mnist_labeled_fast/")
     MovMNIST_dataloader = DataLoader(MovMNIST_dataset, shuffle=True, batch_size=REAL_BATCH_SIZE)
 
     # sample_noise_corr = torch.load("./sample_corr_matrix.pt", map_location="cpu").float()
-    trainer_video = init_big_mov_mnist_model(
+    trainer_video = init_mov_mnist_model(
         lr_warmup_steps=100,
         num_epochs=NUM_EPOCHS,
         total_num_steps=100,
@@ -58,7 +58,7 @@ def main():
         model_type="video",
         use_labels=True,
         cross_att_dim=4,
-        noise_cov_matrix = progressive_noise(20),
+        noise_cov_matrix = torch.eye(20),
     )
 
     trainer_video.load_weights_from(trainer_image.model_ref)
@@ -82,14 +82,14 @@ def main():
     torch.backends.cuda.enable_flash_sdp(True)
     losses = trainer_video.fit(
         dataloader = MovMNIST_dataloader,
-        save_path = "./models/labeled_mov_mnist/prog_noise_big/",
+        save_path = "./models/labeled_mov_mnist/videos/uncorr_noise_fast/",
         num_epochs = NUM_EPOCHS,
         grad_accum_steps = gradient_accumulation_steps,
         class_free_guidance_threshhold = 0.0,
     )
 
-    # losses = torch.cat([torch.load("./models/labeled_mov_mnist/prog_noise_big/losses.pt"), losses])
-    torch.save(losses, "./models/labeled_mov_mnist/prog_noise_big/losses.pt")
+    # losses = torch.cat([torch.load("./models/labeled_mov_mnist/videos/fast/losses.pt"), losses])
+    torch.save(losses, "./models/labeled_mov_mnist/videos/uncorr_noise_fast/losses.pt")
 
 
 if __name__ == "__main__":

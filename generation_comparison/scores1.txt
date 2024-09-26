@@ -1,6 +1,14 @@
 Uncorr noise: Final average warping_error: 0.014136438257992268, Total videos: 1000
 Prog noise:   Final average warping_error: 0.013773467391729355, Total videos: 1000
+Prog_alpha5:  Final average warping_error: 0.013322947546839714, Total videos: 1000
+Prog_alpha20: Final average warping_error: 0.006653130520135164, Total videos: 1000
+Prog_alpha05: Final average warping_error: 0.013369882479310036, Total videos: 1000
+
+Uncorr_Fast:  Final average warping_error: 0.014729512855410576, Total videos: 1000
+Prog_Fast:    Final average warping_error: 0.014408092945814133, Total videos: 1000
+Uncorr_Slow:  Final average warping_error: 0.014360865578055382, Total videos: 1000
+Prog_Slow:    Final average warping_error: 0.013982472009956837, Total videos: 1000
 
 --- Big models ---
-Uncorr noise: Final average warping_error: 0.010082575492560863, Total videos: 1000
-Prog noise:   Final average warping_error: 0.010074752382934093, Total videos: 1000
+Uncorr noise: Final average warping_error: 0.009888095781207085, Total videos: 1000
+Prog noise:   Final average warping_error: 0.009723247028887272, Total videos: 1000

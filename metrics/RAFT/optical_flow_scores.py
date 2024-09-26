@@ -32,7 +32,7 @@ def viz(img, flo, output_dir, img_count):
     cv2.imwrite(output_filename, img_flo[:, :, [2, 1, 0]])
 
 
-def calculate_flow_score(video_path, model):
+def calculate_flow_score(video_path, model, device):
     # Create an output directory
     # output_dir = "output"
     # os.makedirs(output_dir, exist_ok=True)
@@ -82,7 +82,7 @@ def calculate_flow_score(video_path, model):
     return mean_optical_flow_video
 
 
-def calculate_motion_ac_score(video_path, amp, model):
+def calculate_motion_ac_score(video_path, amp, model, device):
     # Create an output directory
     # output_dir = "output"
     # os.makedirs(output_dir, exist_ok=True)
@@ -140,7 +140,7 @@ def calculate_motion_ac_score(video_path, amp, model):
 
 
 # Adapted from https://github.com/phoenix104104/fast_blind_video_consistency
-def compute_video_warping_error(video_path, model):
+def compute_video_warping_error(video_path, model, device):
     cap = cv2.VideoCapture(video_path)
     frames = []
     warping_error = 0
@@ -303,19 +303,19 @@ if __name__ == '__main__':
                 # get the videos' basenames list action_vid  for recognition
                 basename = os.path.basename(video_path)[:4]
                 if  basename in amp_vid.keys():
-                    score = calculate_motion_ac_score(video_path, amp_vid[os.path.basename(video_path)[:4]], model)
+                    score = calculate_motion_ac_score(video_path, amp_vid[os.path.basename(video_path)[:4]], model, device)
                 else:
                     score = None
 
             case 'flow_score':
                 # get the videos' basenames list action_vid  for recognition
                 # basename = os.path.basename(video_path)[:4]
-                score = calculate_flow_score(video_path, model)
+                score = calculate_flow_score(video_path, model, device=device)
 
             case 'warping_error':
                 # get the videos' basenames list action_vid  for recognition
                 basename = os.path.basename(video_path)[:4]
-                score = compute_video_warping_error(video_path, model)
+                score = compute_video_warping_error(video_path, model, device)
 
             case _:
                 raise ValueError(f"Unknown metric type: {metric}. Metric can only be one of 'motion_ac_score', 'flow_score' or 'warping_error'.")
